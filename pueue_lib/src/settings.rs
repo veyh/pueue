@@ -35,6 +35,10 @@ pub struct Shared {
     /// aliases.
     pub alias_file: Option<PathBuf>,
 
+    /// Compress state file with zstd.
+    #[serde(default = "Default::default")]
+    pub compress_state: bool,
+
     /// If this is set to true, unix sockets will be used.
     /// Otherwise we default to TCP+TLS
     #[cfg(not(target_os = "windows"))]
@@ -142,6 +146,7 @@ impl Default for Shared {
             pueue_directory: None,
             runtime_directory: None,
             alias_file: None,
+            compress_state: false,
 
             #[cfg(not(target_os = "windows"))]
             unix_socket_path: None,

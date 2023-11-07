@@ -28,6 +28,7 @@ pest_derive = "2.7"
 shell-escape = "0.1"
 simplelog = "0.12"
 tempfile = "3"
+zstd = "0.13.0"
 
 chrono = { workspace = true }
 command-group = { workspace = true }

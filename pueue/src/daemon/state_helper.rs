@@ -97,21 +97,33 @@ fn save_state_to_file(state: &State, settings: &Settings, log: bool) -> Result<(
     let serialized = serde_json::to_string(&state).context("Failed to serialize state:");
 
     let serialized = serialized.unwrap();
-    let path = settings.shared.pueue_directory();
-    let (temp, real) = if log {
-        let path = path.join("log");
+    let mut path = settings.shared.pueue_directory();
+
+    let prefix = if log {
+        path = path.join("log");
         let now: DateTime<Utc> = Utc::now();
-        let time = now.format("%Y-%m-%d_%H-%M-%S");
-        (
-            path.join(format!("{time}_state.json.partial")),
-            path.join(format!("{time}_state.json")),
-        )
+        now.format("%Y-%m-%d_%H-%M-%S_").to_string()
     } else {
-        (path.join("state.json.partial"), path.join("state.json"))
+        "".to_string()
     };
 
+    let extension = if settings.shared.compress_state {
+        "json.zst"
+    } else {
+        "json"
+    };
+
+    let temp = path.join(format!("{prefix}state.{extension}.partial"));
+    let real = path.join(format!("{prefix}state.{extension}"));
+
     // Write to temporary log file first, to prevent loss due to crashes.
-    fs::write(&temp, serialized).context("Failed to write temp file while saving state.")?;
+
+    if settings.shared.compress_state {
+        let compressed = zstd::stream::encode_all(serialized.as_bytes(), 3).context("failed to compress state")?;
+        fs::write(&temp, compressed).context("Failed to write temp file while saving state.")?;
+    } else {
+        fs::write(&temp, serialized).context("Failed to write temp file while saving state.")?;
+    }
 
     // Overwrite the original with the temp file, if everything went fine.
     fs::rename(&temp, &real).context("Failed to overwrite old state while saving state")?;
@@ -130,8 +142,15 @@ fn save_state_to_file(state: &State, settings: &Settings, log: bool) -> Result<(
 ///
 /// If the state cannot be deserialized, an empty default state will be used instead. \
 /// All groups with queued tasks will be automatically paused to prevent unwanted execution.
-pub fn restore_state(pueue_directory: &Path) -> Result<Option<State>> {
-    let path = pueue_directory.join("state.json");
+pub fn restore_state(settings: &Settings) -> Result<Option<State>> {
+    let extension = if settings.shared.compress_state {
+        "json.zst"
+    } else {
+        "json"
+    };
+
+    let dir = settings.shared.pueue_directory();
+    let path = dir.join(format!("state.{extension}"));
 
     // Ignore if the file doesn't exist. It doesn't have to.
     if !path.exists() {
@@ -141,7 +160,20 @@ pub fn restore_state(pueue_directory: &Path) -> Result<Option<State>> {
     info!("Restoring state");
 
     // Try to load the file.
-    let data = fs::read_to_string(&path).context("State restore: Failed to read file:\n\n{}")?;
+
+    let data = if settings.shared.compress_state {
+        let f = fs::File::open(&path)
+            .context("State restore: Failed to open file:\n\n{}")?;
+
+        let bytes = zstd::stream::decode_all(f)
+            .context("State restore: Failed to decompress file")?;
+
+        String::from_utf8(bytes)
+            .context("State restore: Failed to parse state as UTF-8")?
+    } else {
+        fs::read_to_string(&path)
+            .context("State restore: Failed to read file:\n\n{}")?
+    };
 
     // Try to deserialize the state file.
     let mut state: State = serde_json::from_str(&data).context("Failed to deserialize state.")?;
